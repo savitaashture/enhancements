@@ -10,40 +10,25 @@ status: implementable
 
 ## Summary
 
-The proposal helps user to scope GitHub token to a list of provided repositries which exist in same namespace(By providing configuration at Repository level) as well as different namespace(Global Configuration).
+By default, the GitHub token that Pipelines as Code generates is scoped only to the repository where the payload comes from.
 
-## Motivation/UseCase
+However, in some cases, the developer team might want the token to allow control over additional repositories. For example, there might be a CI repository where the `.tekton/pr.yaml` file and source payload might be located, however the build process defined in `pr.yaml` mightg fetch tasks from a separate private CD repository.
 
-Their is a use case where CI Repos Differ from CD Repos, and the teams would like the generated GitHub Token from Pipelines As Code to allow control over these secondary repos, even if they were not the one triggering the pipeline.
+You can extend the scope of the GitHub token in two ways:
 
-Ex: 
+* _Repository level configuration_: extend the token a list of repositories that exist in the same namespace as the original repository.
 
-CD Repos are private and CI Repos have `.tekton/pr.yaml` and payload coming from CI repos where pr.yaml fetches some tasks from CD Repos which is Private.
+* _Global configuration_: extend the token a list of repositories in different namespaces.
 
-story :
+## Prerequisite
 
-<https://issues.redhat.com/browse/SRVKP-2911>
+In the `pipelines-as-code` configmap, set the `secret-github-app-token-scoped` key to `false`. This setting enables the scoping of the GitHub token to private and public repositories listed under the Global and Repository level configuration.
 
-## Proposal
+### Scoping the GitHub token using Global configuration
 
-There are 2 ways to scope GH token to a list of provided Repos
+You can use global configuration to set a list of repositories in any namespaces.
 
-1. Scoping GH token to a list of Repos provided by global configuration
-2. Scoping GH token to a list of Repos provided by Repository level configuration
-
-**Pre-requisite:**
-
- Disable `secret-github-app-token-scoped` to `false` from `pipelines-as-code` configmap in order to scope GH token to private and public repos listed under Global and Repo level configuration.
-
-### Scoping GH token to a list of Repos provided by global configuration
-
-* When list of Repos provided by global configuration then scope all those Repos by a Github Token irrespective of the namespaces.
-
-* The configuration exist in `pipelines-as-code` configmap.
-
-* The key which used to have list of Repos is `secret-github-app-scope-extra-repos`
-
-  Ex:
+To set the global configuration, in the `pipelines-as-code` configmap, set the `secret-github-app-scope-extra-repos` key, as in the following example:
 
   ```
   apiVersion: v1
@@ -57,9 +42,9 @@ There are 2 ways to scope GH token to a list of provided Repos
 
 ### Scoping GH token to a list of Repos provided by Repository level configuration
 
-* Scope token to a list of Repos provided by `repo_list_to_scope_token` spec configuration within the Repository custom resource
+You can use the `Repository` custom resource to scope the generated GitHub token to a list of repositories. The repositories can be public or private, but must reside in the same namespace as the repository with which the `Repository` resource is associated.
 
-* Repos can be private or public
+Set the `repo_list_to_scope_token` spec configuration within the `Repository` custom resource, as in the following example:
 
   ```
   apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
@@ -69,36 +54,26 @@ There are 2 ways to scope GH token to a list of provided Repos
     namespace: test-repo
   spec:
     url: "https://github.com/linda/project"
-    repo_list_to_scope_token: 
+    repo_list_to_scope_token:
     - "owner/project"
     - "owner1/project1"
   ```
 
-  Now PAC will read `test` Repository custom resource and scope token to `owner/project`, `owner1/project1` and `linda/project` as well
+In this example, the `Repository` custom resource is associated with the `linda/project` repository in the `test-repo` namespace. The scope of the generated GitHub key is extended to the `owner/project` and `owner1/project1` repositories, as well as the `linda/project` repository. These repositories must exist under the `test-repo` namespace.
 
-  **Note:** 
+**Note:**
 
-  1. Both `owner/project` and `owner1/project1` Repository should be in same namespace where `test` Repository exist which is `test-repo` ns.
-
-  2. If any one of the `owner/project` or `owner1/project1` doesn't exist then scoping token will fail
-
-     Ex: 
-     
-     If `owner1/project1` does not exist in the namespace
-
-     Then below error will be displayed
+If any of the repositories does not exist in the namespace, the generation of the GitHub token fails with an error message as in the following example:
 
      ```
      repo owner1/project1 does not exist in namespace test-repo
      ```
 
-### Scenarios when both global and Repo level configurations provided
+### Scenarios for providing global and repository level configurations
 
-1. When Repos are provided by both `secret-github-app-scope-extra-repos` and `repo_list_to_scope_token` then token will be scoped to all the Repos from both configuration
+1. When you provide both a `secret-github-app-scope-extra-repos` key in the `pipelines-as-code` configmap and a `repo_list_to_scope_token` spec configuration in the `Repository` custom resource, the token is scoped to all the repositories from both configurations, as in the following example:
 
-    Ex:
-
-    * List of Repos provided by `secret-github-app-scope-extra-repos` in cm
+    * `pipelines-as-code` configmap:
 
         ```
         apiVersion: v1
@@ -110,7 +85,7 @@ There are 2 ways to scope GH token to a list of provided Repos
           namespace: pipelines-as-code
         ```
 
-    * List of Repos provided by `repo_list_to_scope_token` in Repository spec
+    * `Repository` custom resource
 
         ```
         apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
@@ -120,28 +95,26 @@ There are 2 ways to scope GH token to a list of provided Repos
           namespace: test-repo
         spec:
           url: "https://github.com/linda/project"
-          repo_list_to_scope_token: 
+          repo_list_to_scope_token:
           - "owner/project"
           - "owner1/project1"
         ```
 
-    Now the GH token will be scoped to `owner/project`, `owner1/project1`, `owner2/project2`, `owner3/project3`, `linda/project`
+    The GitHub token is scoped to the following repositories: `owner/project`, `owner1/project1`, `owner2/project2`, `owner3/project3`, `linda/project`.
 
-2. If only Global `secret-github-app-scope-extra-repos` set then token will be scoped to all the provided repos 
+2. If you set only the global configuration in the `secret-github-app-scope-extra-repos` key in the `pipelines-as-code` configmap, the GitHub token is scoped to all the listed repositories, as well as the original reporitory from which the payload files come.
 
-3. If only repos are provided by Repository spec using `repo_list_to_scope_token` then token will be scoped to all provided repos only when all repos exist in the same namespace where Repository created. 
+3. If you set only the `repo_list_to_scope_token` spec in the `Repository` custom resource, the GitHub token is scoped to all the listed repositories, as well as the original reporitory from which the payload files come. All the repositories must exist in the same namespace where the `Repository` custom resource is created.
 
-4. If no Github App is installed for the provided Repos in both global and repo level configuration then scoping token will fail with below error
+4. If you did not install the GitHub app for any repositories that you list in the global or repository level configuration, creation of the GitHub token fails with the following error message:
 
 ```
 failed to scope token to repositories in namespace article-pipelines with error : could not refresh installation id 36523992's token: received non 2xx response status \"422 Unprocessable Entity\" when fetching https://api.github.com/app/installations/36523992/access_tokens: Post \"https://api.github.com/repos/savitaashture/article/check-runs\
 ```
 
-5. If repos are given by `repo_list_to_scope_token` or `secret-github-app-scope-extra-repos` failed to scope token for any reason then CI will not run.
+5. If the scoping of the GitHub token to the repositories set in global or repository level configuration fails for any reason, the CI process does not run. This includes cases where the same repository is listed in the global or repository level configuration, and the scoping fails for the repository level configuration because the repository is not in the same namespace as the `Repository` custom resource.
 
-6. repo `owner5/project5` is given globally as well as at Repo level using  `secret-github-app-scope-extra-repos` and `repo_list_to_scope_token` 
-
-    Ex:
+In the following example, the `owner5/project5` repository is listed in both the global configuration and in  tyhe repository level configuration:
 
     ```
     apiVersion: v1
@@ -161,13 +134,12 @@ failed to scope token to repositories in namespace article-pipelines with error 
       namespace: test-repo
     spec:
       url: "https://github.com/linda/project"
-      repo_list_to_scope_token: 
+      repo_list_to_scope_token:
       - "owner5/project5"
     ```
 
-    still failed to scope token with below error
+In this example, if the `owner5/project5` repository is not under the `test-repo` namespace, creation of the GitHub token fails with the following error message:
+
     ```
     repo owner5/project5 does not exist in namespace test-repo
     ```
-    because `owner5/project5` doesn't exist in namespace `test-repo`.
-
